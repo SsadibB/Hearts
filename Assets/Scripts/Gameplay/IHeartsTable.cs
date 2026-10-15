@@ -8,11 +8,13 @@ namespace Hearts.Gameplay
         bool IsActive { get; }
         int Phase { get; }
         int CurrentPlayer { get; }
+        int LastTrickWinner { get; }
         int RoundIndex { get; }
         int Loser { get; }
         int LocalSeat { get; }
         string Status { get; }
         bool CanRequestNextRound { get; }
+        bool CanRestartMatch { get; }
         IReadOnlyList<int> LocalCards { get; }
         int TrickCard(int seat);
         int RoundScore(int seat);
@@ -26,5 +28,7 @@ namespace Hearts.Gameplay
         void SubmitPass(int first, int second, int third);
         void SubmitPlay(int cardIndex);
         void RequestNextRound();
+        void RestartMatch();
+        void FinishTrickPresentation();
     }
 }

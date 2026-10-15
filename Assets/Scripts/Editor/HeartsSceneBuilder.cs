@@ -93,12 +93,19 @@ namespace Hearts.EditorTools
             var hand = Create("LocalPlayerHand", gameTable, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0, 24), new Vector2(1400, 190));
             var deck = Create("DeckPoint", gameTable, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0, 30), new Vector2(20, 20));
             var tableStatus = Label(gameTable, "TableStatus", "", 24, TextAnchor.MiddleCenter, font, new Vector2(0.5f, 0.5f), new Vector2(0, 190), new Vector2(700, 40));
-            var leave = Button(gameTable, "LeaveButton", "Leave", font, new Vector2(860, 500), new Vector2(140, 44));
+            var leave = Button(gameTable, "LeaveButton", "Leave", font, new Vector2(-16, -16), new Vector2(140, 44));
+            var leaveRect = leave.GetComponent<RectTransform>();
+            leaveRect.anchorMin = new Vector2(1f, 1f);
+            leaveRect.anchorMax = new Vector2(1f, 1f);
+            leaveRect.pivot = new Vector2(1f, 1f);
+            leaveRect.anchoredPosition = new Vector2(-16f, -16f);
 
             var passing = Panel(canvasGo.transform, "CardPassingPanel", new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Color(0f, 0f, 0f, 0.35f));
             var passingRect = passing.GetComponent<RectTransform>();
+            passingRect.anchorMin = new Vector2(1f, 0f);
+            passingRect.anchorMax = new Vector2(1f, 0f);
             passingRect.pivot = new Vector2(1f, 0f);
-            passingRect.anchoredPosition = new Vector2(900, 30);
+            passingRect.anchoredPosition = new Vector2(-16f, 16f);
             passingRect.sizeDelta = new Vector2(220, 180);
             Label(passing, "PassHint", "Select 3 cards", 20, TextAnchor.UpperCenter, font, new Vector2(0.5f, 1f), new Vector2(0, -8), new Vector2(200, 60));
             passing.gameObject.SetActive(false);

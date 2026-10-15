@@ -22,11 +22,13 @@ namespace Hearts.Gameplay
         public bool IsActive => _running;
         public int Phase => _running ? (int)_match.Phase : (int)MatchPhase.Waiting;
         public int CurrentPlayer => _match.CurrentPlayer;
+        public int LastTrickWinner => _running ? _match.LastTrickWinner : -1;
         public int RoundIndex => _match.RoundIndex;
         public int Loser => _match.Loser;
         public int LocalSeat => 0;
         public string Status => _status;
         public bool CanRequestNextRound => _running && _match.Phase == MatchPhase.RoundEnd;
+        public bool CanRestartMatch => _running && (_match.Phase == MatchPhase.RoundEnd || _match.Phase == MatchPhase.MatchOver);
         public IReadOnlyList<int> LocalCards => _localCards;
 
         public event Action HandChanged;
@@ -140,6 +142,28 @@ namespace Hearts.Gameplay
             StartRound();
         }
 
+        public void RestartMatch()
+        {
+            if (!_running)
+                return;
+            _botAt = -1f;
+            _confirmAt = -1f;
+            _match.ResetMatch();
+            StartRound();
+        }
+
+        public void FinishTrickPresentation()
+        {
+            if (!_running)
+                return;
+            _confirmAt = -1f;
+            if (!_match.TryConfirmTrick(out _))
+                return;
+            CopyLocalHand();
+            DescribePhase();
+            ScheduleBot();
+        }
+
         void Update()
         {
             if (!_running)
@@ -206,7 +230,7 @@ namespace Hearts.Gameplay
             if (_match.AwaitingTrickConfirm)
             {
                 _status = PlayerName(_match.LastTrickWinner) + " takes the trick";
-                _confirmAt = Time.unscaledTime + 1.25f;
+                _confirmAt = Time.unscaledTime + 4.5f;
                 _botAt = -1f;
                 return;
             }

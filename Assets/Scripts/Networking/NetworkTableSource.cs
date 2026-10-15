@@ -18,11 +18,13 @@ namespace Hearts.Networking
         public bool IsActive => match != null && match.Object != null && match.Object.IsValid;
         public int Phase => match != null ? match.Phase : (int)MatchPhase.Waiting;
         public int CurrentPlayer => match != null ? match.CurrentPlayer : -1;
+        public int LastTrickWinner => match != null ? match.LastTrickWinner : -1;
         public int RoundIndex => match != null ? match.RoundIndex : 0;
         public int Loser => match != null ? match.Loser : -1;
         public int LocalSeat => Local() != null ? Local().Seat : 0;
         public string Status => match != null && match.Object != null && match.Object.IsValid ? match.Status.ToString() : "";
         public bool CanRequestNextRound => match != null && match.Phase == (int)MatchPhase.RoundEnd && match.HasStateAuthority;
+        public bool CanRestartMatch => match != null && match.HasStateAuthority && (match.Phase == (int)MatchPhase.RoundEnd || match.Phase == (int)MatchPhase.MatchOver);
         public IReadOnlyList<int> LocalCards => Local() != null ? Local().LocalCards : EmptyCards;
 
         public event Action HandChanged;
@@ -84,6 +86,18 @@ namespace Hearts.Networking
         {
             if (match != null && match.HasStateAuthority)
                 match.RequestNextRound();
+        }
+
+        public void RestartMatch()
+        {
+            if (match != null && match.HasStateAuthority)
+                match.RestartMatch();
+        }
+
+        public void FinishTrickPresentation()
+        {
+            if (match != null && match.HasStateAuthority)
+                match.FinishTrickPresentation();
         }
 
         void Update()

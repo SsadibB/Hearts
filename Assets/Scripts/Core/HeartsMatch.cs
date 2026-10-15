@@ -40,6 +40,28 @@ namespace Hearts.Core
 
         public bool PassSubmitted(int player) => _passSubmitted[player];
 
+        public void ResetMatch()
+        {
+            Phase = MatchPhase.Waiting;
+            CurrentPlayer = -1;
+            LeadPlayer = -1;
+            TrickNumber = 0;
+            HeartsBroken = false;
+            RoundIndex = 0;
+            LastTrickWinner = -1;
+            Loser = -1;
+            AwaitingTrickConfirm = false;
+            ClearTrick();
+            for (int i = 0; i < HeartsRules.PlayerCount; i++)
+            {
+                _hands[i].Clear();
+                _pendingPasses[i].Clear();
+                _passSubmitted[i] = false;
+                RoundScores[i] = 0;
+                TotalScores[i] = 0;
+            }
+        }
+
         public bool TryStartRound(int seed, out string error)
         {
             if (Phase != MatchPhase.Waiting && Phase != MatchPhase.RoundEnd)

@@ -6,13 +6,13 @@ namespace Hearts.Presentation
 {
     public class CardAnimationController : MonoBehaviour
     {
-        [SerializeField] float moveDuration = 0.35f;
+        [SerializeField] float moveDuration = 0.85f;
 
         int _locks;
 
         public bool InputLocked => _locks > 0;
 
-        public void Move(RectTransform rect, Vector2 anchoredPosition, bool critical, Action onComplete, float delay = 0f)
+        public void Move(RectTransform rect, Vector2 anchoredPosition, bool critical, Action onComplete, float delay = 0f, float zDegrees = 0f, float duration = -1f)
         {
             if (rect == null)
             {
@@ -23,25 +23,42 @@ namespace Hearts.Presentation
             if (critical)
                 _locks++;
 
+            float time = duration > 0f ? duration : moveDuration;
             var finished = false;
             void Finish()
             {
                 if (finished)
                     return;
                 finished = true;
-                rect.localScale = Vector3.one;
+                rect.localRotation = Quaternion.Euler(0f, 0f, zDegrees);
                 if (critical)
                     _locks = Mathf.Max(0, _locks - 1);
                 onComplete?.Invoke();
             }
 
             rect.DOKill(false);
-            rect.localScale = Vector3.one;
-            rect.DOAnchorPos(anchoredPosition, moveDuration)
+            rect.DOAnchorPos(anchoredPosition, time)
                 .SetDelay(delay)
-                .SetEase(Ease.OutCubic)
+                .SetEase(Ease.InOutCubic)
                 .OnComplete(Finish)
                 .OnKill(Finish);
+            rect.DOLocalRotate(new Vector3(0f, 0f, zDegrees), time, RotateMode.Fast)
+                .SetDelay(delay)
+                .SetEase(Ease.InOutCubic);
+        }
+
+        public void MoveY(RectTransform rect, float y, Action onComplete = null)
+        {
+            if (rect == null)
+            {
+                onComplete?.Invoke();
+                return;
+            }
+
+            rect.DOKill(false);
+            rect.DOAnchorPosY(y, 0.22f)
+                .SetEase(Ease.OutCubic)
+                .OnComplete(() => onComplete?.Invoke());
         }
 
         public void Flip(RectTransform rect, Action onEdge, Action onComplete, float delay = 0f)
@@ -55,8 +72,9 @@ namespace Hearts.Presentation
 
             _locks++;
             rect.DOKill(false);
+            float facing = rect.localEulerAngles.z;
+            rect.localRotation = Quaternion.Euler(0f, 0f, facing);
             rect.localScale = Vector3.one;
-            rect.localRotation = Quaternion.identity;
             var edged = false;
             var finished = false;
             void Edge()
@@ -72,7 +90,7 @@ namespace Hearts.Presentation
                     return;
                 finished = true;
                 Edge();
-                rect.localRotation = Quaternion.identity;
+                rect.localRotation = Quaternion.Euler(0f, 0f, facing);
                 rect.localScale = Vector3.one;
                 _locks = Mathf.Max(0, _locks - 1);
                 onComplete?.Invoke();
@@ -80,11 +98,24 @@ namespace Hearts.Presentation
 
             var sequence = DOTween.Sequence();
             sequence.SetDelay(delay);
-            sequence.Append(rect.DOLocalRotate(new Vector3(0f, 90f, 0f), 0.12f).SetEase(Ease.InQuad));
+            sequence.Append(rect.DOScaleX(0f, 0.12f).SetEase(Ease.InQuad));
             sequence.AppendCallback(Edge);
-            sequence.Append(rect.DOLocalRotate(Vector3.zero, 0.12f).SetEase(Ease.OutQuad));
+            sequence.Append(rect.DOScaleX(1f, 0.12f).SetEase(Ease.OutQuad));
             sequence.OnComplete(Finish);
             sequence.OnKill(Finish);
+        }
+
+        public void ResetCard(RectTransform rect)
+        {
+            if (rect == null)
+                return;
+            rect.DOKill(false);
+            rect.localScale = Vector3.one;
+            var group = rect.GetComponent<CanvasGroup>();
+            if (group == null)
+                return;
+            group.DOKill(false);
+            group.alpha = 1f;
         }
 
         public void Fade(CanvasGroup group, float alpha, bool activeWhenShown, Action onComplete)
@@ -119,6 +150,53 @@ namespace Hearts.Presentation
                 .SetEase(Ease.OutQuad)
                 .OnComplete(Finish)
                 .OnKill(Finish);
+        }
+
+        public void Collect(RectTransform rect, Vector2 anchoredPosition, Transform tuckUnder, Action onComplete, float delay = 0f)
+        {
+            if (rect == null)
+            {
+                onComplete?.Invoke();
+                return;
+            }
+
+            _locks++;
+            rect.DOKill(false);
+            var group = rect.GetComponent<CanvasGroup>();
+            if (group == null)
+                group = rect.gameObject.AddComponent<CanvasGroup>();
+            group.DOKill(false);
+            group.alpha = 1f;
+            group.interactable = false;
+            group.blocksRaycasts = false;
+
+            var finished = false;
+            void Finish()
+            {
+                if (finished)
+                    return;
+                finished = true;
+                _locks = Mathf.Max(0, _locks - 1);
+                onComplete?.Invoke();
+            }
+
+            var sequence = DOTween.Sequence();
+            sequence.SetDelay(delay);
+            sequence.Append(rect.DOAnchorPos(anchoredPosition, 1.15f).SetEase(Ease.InOutCubic));
+            sequence.Join(rect.DOLocalRotate(Vector3.zero, 1.15f, RotateMode.Fast).SetEase(Ease.InOutCubic));
+            sequence.AppendCallback(() =>
+            {
+                if (tuckUnder != null)
+                {
+                    rect.SetParent(tuckUnder, true);
+                    rect.SetAsFirstSibling();
+                }
+                else
+                    rect.SetAsFirstSibling();
+            });
+            sequence.Append(group.DOFade(0f, 0.42f).SetEase(Ease.InOutQuad));
+            sequence.OnComplete(Finish);
+            sequence.OnKill(Finish);
         }
 
         void OnDisable()

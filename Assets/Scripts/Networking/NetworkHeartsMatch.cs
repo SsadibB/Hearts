@@ -115,7 +115,7 @@ namespace Hearts.Networking
             if (_match.AwaitingTrickConfirm)
             {
                 Status = SeatName(_match.LastTrickWinner) + " takes the trick";
-                _confirmTrickAt = Time.unscaledTime + 1.25f;
+                _confirmTrickAt = Time.unscaledTime + 4.5f;
             }
             else if (_match.Phase == MatchPhase.RoundEnd)
                 Status = "Round complete";
@@ -133,6 +133,33 @@ namespace Hearts.Networking
                 return;
             }
             StartRound();
+        }
+
+        public void RestartMatch()
+        {
+            if (!HasStateAuthority)
+                return;
+            _confirmTrickAt = -1f;
+            _autoPlayAt = -1f;
+            _match.ResetMatch();
+            StartRound();
+        }
+
+        public void FinishTrickPresentation()
+        {
+            if (!HasStateAuthority)
+                return;
+            _confirmTrickAt = -1f;
+            if (!_match.TryConfirmTrick(out _))
+                return;
+            Publish();
+            SendAllHands();
+            if (_match.Phase == MatchPhase.RoundEnd)
+                Status = "Round complete";
+            else if (_match.Phase == MatchPhase.MatchOver)
+                Status = "Match over";
+            else if (_match.CurrentPlayer >= 0 && _match.CurrentPlayer < seats.Length && (seats[_match.CurrentPlayer] == null || !seats[_match.CurrentPlayer].Connected))
+                _autoPlayAt = Time.unscaledTime + 0.75f;
         }
 
         void Update()
