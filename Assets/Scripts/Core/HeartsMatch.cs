@@ -10,6 +10,7 @@ namespace Hearts.Core
         readonly bool[] _passSubmitted = new bool[HeartsRules.PlayerCount];
         readonly List<CardId> _trickOrder = new List<CardId>(HeartsRules.PlayerCount);
         readonly CardId?[] _trickBySeat = new CardId?[HeartsRules.PlayerCount];
+        readonly List<int[]> _roundLog = new List<int[]>();
 
         public MatchPhase Phase { get; private set; } = MatchPhase.Waiting;
         public int CurrentPlayer { get; private set; } = -1;
@@ -40,6 +41,15 @@ namespace Hearts.Core
 
         public bool PassSubmitted(int player) => _passSubmitted[player];
 
+        public int LoggedRounds => _roundLog.Count;
+
+        public int LoggedScore(int round, int seat)
+        {
+            if (round < 0 || round >= _roundLog.Count || seat < 0 || seat >= HeartsRules.PlayerCount)
+                return 0;
+            return _roundLog[round][seat];
+        }
+
         public void ResetMatch()
         {
             Phase = MatchPhase.Waiting;
@@ -60,6 +70,7 @@ namespace Hearts.Core
                 RoundScores[i] = 0;
                 TotalScores[i] = 0;
             }
+            _roundLog.Clear();
         }
 
         public bool TryStartRound(int seed, out string error)
@@ -300,8 +311,13 @@ namespace Hearts.Core
 
         void FinishRound()
         {
+            var logged = new int[HeartsRules.PlayerCount];
             for (int i = 0; i < HeartsRules.PlayerCount; i++)
+            {
+                logged[i] = RoundScores[i];
                 TotalScores[i] += RoundScores[i];
+            }
+            _roundLog.Add(logged);
 
             RoundIndex++;
             int highest = 0;

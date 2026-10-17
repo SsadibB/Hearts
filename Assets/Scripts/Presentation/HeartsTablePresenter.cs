@@ -47,6 +47,8 @@ namespace Hearts.Presentation
         RectTransform _canvasRect;
         bool _metricsReady;
         readonly RectTransform[] _handContainers = new RectTransform[4];
+        readonly Vector2[] _handCardSize = new Vector2[4];
+        readonly bool[] _handCardSizeReady = new bool[4];
         string _handKey = "";
         int _phase = -2;
         IHeartsTable _hooked;
@@ -55,9 +57,12 @@ namespace Hearts.Presentation
         bool _clearingTrick;
         bool _cardsHidden = true;
         int _visualVersion;
+        int _leaderboardPhase = -2;
+        bool _startingNextRound;
 
         void Awake()
         {
+            CaptureHandCardSizes();
             if (cards == null)
                 return;
             for (int i = 0; i < cards.Length; i++)
@@ -265,41 +270,232 @@ namespace Hearts.Presentation
             picked.Sort((a, b) => order[a].CompareTo(order[b]));
             if (ui != null)
                 ui.ShowPassArrow(false, false);
-            if (animations == null)
+            if (animations == null || cards == null)
             {
                 _selected.Clear();
                 table.SubmitPass(picked[0], picked[1], picked[2]);
                 return;
             }
 
+            SettlePass(table, picked);
+        }
+
+        void SettlePass(IHeartsTable table, List<int> picked)
+        {
+            EnsureFans(table);
+            var oldLocal = new HashSet<int>();
+            for (int i = 0; i < table.LocalCards.Count; i++)
+                oldLocal.Add(table.LocalCards[i]);
+
+            int local = table.LocalSeat;
+            var outgoing = new List<int>[4];
+            for (int seat = 0; seat < 4; seat++)
+                outgoing[seat] = seat == local ? new List<int>(picked) : Tail(_fans[seat], HeartsRules.PassCount);
+
             _passAnimating = true;
-            int version = _visualVersion;
-            int pending = picked.Count;
-            for (int i = 0; i < picked.Count; i++)
+            table.SubmitPass(picked[0], picked[1], picked[2]);
+
+            var arrived = new List<int>();
+            for (int i = 0; i < table.LocalCards.Count; i++)
             {
-                CardView view = cards[picked[i]];
-                int passScreen = ScreenOf(HeartsRules.NextSeat(table.LocalSeat), table.LocalSeat);
-                Vector2 target = FanPosition(passScreen, i, picked.Count);
-                float delay = i * 0.06f;
-                animations.Move(view.Rect, target, true, () =>
-                {
-                    if (version != _visualVersion)
-                        return;
-                    pending--;
-                    if (pending > 0)
-                        return;
-                    _passAnimating = false;
-                    _selected.Clear();
-                    table.SubmitPass(picked[0], picked[1], picked[2]);
-                }, delay, Facing(passScreen));
+                if (!oldLocal.Contains(table.LocalCards[i]))
+                    arrived.Add(table.LocalCards[i]);
             }
+
+            int right = (local + 3) % 4;
+            for (int i = 0; i < arrived.Count && i < outgoing[right].Count; i++)
+            {
+                int real = arrived[i];
+                int slotView = outgoing[right][i];
+                if (real == slotView)
+                    continue;
+                SwapFanIds(real, slotView);
+                ExchangePlaces(real, slotView);
+                for (int seat = 0; seat < 4; seat++)
+                {
+                    for (int n = 0; n < outgoing[seat].Count; n++)
+                    {
+                        if (outgoing[seat][n] == real)
+                            outgoing[seat][n] = slotView;
+                    }
+                }
+                outgoing[right][i] = real;
+            }
+
+            var finalFan = new List<int>[4];
+            for (int seat = 0; seat < 4; seat++)
+            {
+                finalFan[seat] = new List<int>();
+                if (seat == local)
+                {
+                    for (int i = 0; i < table.LocalCards.Count; i++)
+                        finalFan[seat].Add(table.LocalCards[i]);
+                    continue;
+                }
+
+                var leaving = new HashSet<int>(outgoing[seat]);
+                for (int n = 0; n < _fans[seat].Count; n++)
+                {
+                    if (!leaving.Contains(_fans[seat][n]))
+                        finalFan[seat].Add(_fans[seat][n]);
+                }
+
+                int giver = (seat + 3) % 4;
+                if (giver == local)
+                    finalFan[seat].AddRange(picked);
+                else
+                    finalFan[seat].AddRange(outgoing[giver]);
+            }
+
+            for (int seat = 0; seat < 4; seat++)
+            {
+                _fans[seat].Clear();
+                if (seat == local)
+                    continue;
+                _fans[seat].AddRange(finalFan[seat]);
+            }
+            _fansReady = true;
+
+            int version = _visualVersion;
+            int pending = 0;
+            for (int seat = 0; seat < 4; seat++)
+            {
+                int screen = ScreenOf(seat, local);
+                int count = Mathf.Max(1, finalFan[seat].Count);
+                for (int index = 0; index < finalFan[seat].Count; index++)
+                {
+                    int card = finalFan[seat][index];
+                    if (card < 0 || card >= cards.Length || cards[card] == null)
+                        continue;
+                    Vector2 target = HandLocal(screen, index, count, false);
+                    float rotation = FanRotation(screen, index, count);
+                    bool face = screen == 0;
+                    CardView view = cards[card];
+                    view.Rect.sizeDelta = CardSizeFor(screen);
+                    view.ShowFace(face);
+                    _shownPos[card] = target;
+                    _shownRot[card] = rotation;
+                    _shownFace[card] = face;
+                    RectTransform hand = HandContainer(screen);
+                    bool parked = hand != null
+                        && view.Rect.parent == hand
+                        && Vector2.Distance(view.Rect.anchoredPosition, target) <= 0.5f
+                        && Mathf.Abs(Mathf.DeltaAngle(view.Rect.localEulerAngles.z, rotation)) <= 0.75f;
+                    if (parked || animations == null)
+                    {
+                        if (hand != null)
+                            view.Rect.SetParent(hand, false);
+                        view.Rect.anchoredPosition = target;
+                        view.Rect.localRotation = Quaternion.Euler(0f, 0f, rotation);
+                        continue;
+                    }
+
+                    pending++;
+                    if (view.Rect.parent != hand)
+                        view.Rect.SetParent(hand, true);
+                    int captured = card;
+                    animations.Move(view.Rect, target, true, () =>
+                    {
+                        if (version != _visualVersion)
+                            return;
+                        if (cards[captured] != null)
+                            cards[captured].ShowFace(face);
+                        pending--;
+                        if (pending > 0)
+                            return;
+                        _passAnimating = false;
+                        _selected.Clear();
+                    }, (index % 3) * 0.03f, rotation, 0.7f);
+                }
+            }
+
+            if (pending == 0)
+            {
+                _passAnimating = false;
+                _selected.Clear();
+            }
+        }
+
+        void SwapFanIds(int a, int b)
+        {
+            for (int seat = 0; seat < _fans.Length; seat++)
+            {
+                int atA = _fans[seat].IndexOf(a);
+                int atB = _fans[seat].IndexOf(b);
+                if (atA >= 0)
+                    _fans[seat][atA] = b;
+                if (atB >= 0)
+                    _fans[seat][atB] = a;
+            }
+        }
+
+        static List<int> Tail(List<int> source, int count)
+        {
+            var tail = new List<int>();
+            if (source == null || count <= 0)
+                return tail;
+            int start = Mathf.Max(0, source.Count - count);
+            for (int i = start; i < source.Count; i++)
+                tail.Add(source[i]);
+            return tail;
+        }
+
+        void EnsureFans(IHeartsTable table)
+        {
+            if (_fansReady || cards == null || table == null)
+                return;
+            for (int seat = 0; seat < _fans.Length; seat++)
+                _fans[seat].Clear();
+            int local = table.LocalSeat;
+            for (int i = 0; i < cards.Length; i++)
+            {
+                CardView view = cards[i];
+                if (view == null || !view.gameObject.activeInHierarchy)
+                    continue;
+                int screen = ScreenOfParent(view.Rect.parent);
+                if (screen < 0)
+                    continue;
+                _fans[(local + screen) % 4].Add(i);
+            }
+            _fansReady = true;
+        }
+
+        int ScreenOfParent(Transform parent)
+        {
+            if (parent == null)
+                return -1;
+            for (int screen = 0; screen < 4; screen++)
+            {
+                RectTransform hand = HandContainer(screen);
+                if (hand != null && parent == hand)
+                    return screen;
+            }
+            return -1;
         }
 
         void RequestNextRound()
         {
+            if (_startingNextRound)
+                return;
             var table = ActiveTable();
-            if (table != null)
-                table.RestartMatch();
+            if (table == null)
+                return;
+            _startingNextRound = true;
+            void StartRound()
+            {
+                _startingNextRound = false;
+                var active = ActiveTable();
+                if (active == null)
+                    return;
+                if (active.Phase == (int)MatchPhase.MatchOver)
+                    active.RestartMatch();
+                else
+                    active.RequestNextRound();
+            }
+            if (ui != null)
+                ui.CloseLeaderboard(StartRound);
+            else
+                StartRound();
         }
 
         void LayoutCards(IHeartsTable table)
@@ -388,7 +584,7 @@ namespace Hearts.Presentation
                 float duration = 0.65f;
                 int priority = draw;
                 Vector2 target = DeckPosition(i);
-                Vector2 size = _metricsReady ? _metrics.cardSize : view.Rect.sizeDelta;
+                Vector2 size = view.Rect.sizeDelta;
                 RectTransform home = cardsRoot;
                 bool inHand = false;
 
@@ -401,6 +597,7 @@ namespace Hearts.Presentation
                     if (playIndex < 0)
                         playIndex = 0;
                     target = TrickPosition(screen);
+                    size = CardSizeFor(0);
                     rotation = TableLayout.TrickRotation(screen);
                     duration = 1.05f;
                     priority = 400 + playIndex;
@@ -410,14 +607,14 @@ namespace Hearts.Presentation
                     face = true;
                     int order = handOrder.IndexOf(i);
                     bool selected = _selected.Contains(i);
-                    size = _metricsReady ? _metrics.localCardSize : size;
+                    size = CardSizeFor(0);
                     target = HandLocal(0, order, handOrder.Count, selected);
                     duration = 0.65f;
                     priority = 200 + order;
                     home = HandContainer(0);
                     inHand = true;
                     bool sameX = !float.IsNaN(_shownPos[i].x) && Mathf.Abs(_shownPos[i].x - target.x) <= 0.5f;
-                    bool sameRot = !float.IsNaN(_shownRot[i]) && Mathf.Abs(Mathf.DeltaAngle(_shownRot[i], 0f)) <= 0.75f;
+                    bool sameRot = !float.IsNaN(_shownRot[i]) && Mathf.Abs(Mathf.DeltaAngle(_shownRot[i], rotation)) <= 0.75f;
                     liftOnly = sameX && sameRot && (float.IsNaN(_shownPos[i].y) || Mathf.Abs(_shownPos[i].y - target.y) > 0.5f);
                 }
                 else if (visualSeat.TryGetValue(i, out int owner))
@@ -426,6 +623,7 @@ namespace Hearts.Presentation
                     int count = Mathf.Max(1, fanCount[screen]);
                     target = HandLocal(screen, fanIndex[i], count, false);
                     rotation = FanRotation(screen, fanIndex[i], count);
+                    size = CardSizeFor(screen);
                     duration = 0.65f;
                     priority = 100 + screen * 20 + fanIndex[i];
                     home = HandContainer(screen);
@@ -438,8 +636,7 @@ namespace Hearts.Presentation
                     view.Rect.SetParent(home, true);
                 Vector2 localTarget = inHand ? target : ToParent(home, target);
 
-                if (_metricsReady)
-                    view.Rect.sizeDelta = size;
+                view.Rect.sizeDelta = size;
                 view.SetSelected(_selected.Contains(i));
                 view.SetInteractable(CanClick(table, view.CardIndex));
 
@@ -486,7 +683,6 @@ namespace Hearts.Presentation
             int localSeat = table.LocalSeat;
             string[] names = new string[4];
             var sprites = new Sprite[4];
-            int[] round = new int[4];
             int[] total = new int[4];
             for (int seat = 0; seat < 4; seat++)
             {
@@ -503,7 +699,6 @@ namespace Hearts.Presentation
                 }
                 names[seat] = playerName;
                 sprites[seat] = ui != null ? ui.Avatar(table.AvatarIndex(seat)) : null;
-                round[seat] = table.RoundScore(seat);
                 total[seat] = table.TotalScore(seat);
             }
 
@@ -514,7 +709,10 @@ namespace Hearts.Presentation
             bool over = table.Phase == (int)MatchPhase.MatchOver;
             if (ui != null)
             {
-                ui.ShowLeaderboard(roundEnd || over);
+                bool end = roundEnd || over;
+                if (end && _leaderboardPhase != table.Phase)
+                    ui.OpenLeaderboard();
+                _leaderboardPhase = end ? table.Phase : -1;
                 if (over)
                 {
                     int loser = Mathf.Max(0, table.Loser);
@@ -526,8 +724,17 @@ namespace Hearts.Presentation
                     ui.HideGameOver();
                 }
             }
-            if ((roundEnd || over) && leaderboard != null)
-                leaderboard.ShowRound(over ? "Final scores" : "Round " + table.RoundIndex, names, sprites, round, total);
+            if (leaderboard != null && table.Phase != (int)MatchPhase.Waiting)
+            {
+                int rounds = table.LoggedRounds;
+                var history = new int[Mathf.Max(0, rounds) * 4];
+                for (int logged = 0; logged < rounds; logged++)
+                {
+                    for (int seat = 0; seat < 4; seat++)
+                        history[logged * 4 + seat] = table.LoggedScore(logged, seat);
+                }
+                leaderboard.ShowRounds(names, sprites, rounds, history, total);
+            }
         }
 
         void RefreshClicks(IHeartsTable table)
@@ -561,10 +768,11 @@ namespace Hearts.Presentation
                 ui.ShowPassArrow(table.Phase == (int)MatchPhase.Passing && !_dealing && !_passAnimating, _selected.Count == HeartsRules.PassCount);
             if (ui != null && ui.NextRoundButton != null)
             {
+                bool over = table.Phase == (int)MatchPhase.MatchOver;
                 ui.NextRoundButton.gameObject.SetActive(table.CanRestartMatch);
                 var label = ui.NextRoundButton.GetComponentInChildren<Text>();
                 if (label != null)
-                    label.text = "Play Again";
+                    label.text = over ? "Play Again" : "Next round";
             }
         }
 
@@ -645,8 +853,8 @@ namespace Hearts.Presentation
                 else
                     view.Rect.localScale = Vector3.one;
                 view.Rect.localRotation = Quaternion.identity;
-                if (_metricsReady)
-                    view.Rect.sizeDelta = localSet.Contains(i) ? _metrics.localCardSize : _metrics.cardSize;
+                if (localSet.Contains(i))
+                    view.Rect.sizeDelta = CardSizeFor(0);
                 _shownRot[i] = 0f;
                 Vector2 deck = DeckPosition(i);
                 view.Rect.anchoredPosition = deck;
@@ -752,8 +960,7 @@ namespace Hearts.Presentation
                         cards[index].Rect.SetParent(hand, true);
                     _shownPos[index] = target;
                     _shownRot[index] = rotation;
-                    if (_metricsReady)
-                        cards[index].Rect.sizeDelta = _metrics.cardSize;
+                    cards[index].Rect.sizeDelta = CardSizeFor(screen);
                     if (animations != null)
                         animations.Move(cards[index].Rect, target, false, null, n * 0.02f, rotation);
                     else
@@ -776,7 +983,7 @@ namespace Hearts.Presentation
             return 0f;
         }
 
-        static float FanRotation(int screen, int index, int count)
+        float FanRotation(int screen, int index, int count)
         {
             float along = count <= 1 ? 0f : (index / (float)(count - 1)) * 2f - 1f;
             if (screen == 1)
@@ -784,8 +991,26 @@ namespace Hearts.Presentation
             if (screen == 3)
                 return TableLayout.RightRotation - along * 10f;
             if (screen == 2)
-                return -along * 8f;
+                return TopFan(index, count).rotation;
             return 0f;
+        }
+
+        (Vector2 position, float rotation) TopFan(int index, int count)
+        {
+            int safeCount = Mathf.Max(1, count);
+            int safeIndex = Mathf.Clamp(index, 0, safeCount - 1);
+            float along = safeCount <= 1 ? 0f : (safeIndex / (float)(safeCount - 1)) * 2f - 1f;
+            float center = (safeCount - 1) * 0.5f;
+            Vector2 card = CardSizeFor(2);
+            float width = HandContainer(2) != null ? HandContainer(2).rect.width : card.x * 8f;
+            float room = Mathf.Max(0f, width - card.x);
+            float step = safeCount <= 1 ? 0f : Mathf.Min(card.x * 0.4f, room / (safeCount - 1));
+            float bow = Mathf.Min(22f, card.y * 0.07f);
+            float x = (safeIndex - center) * step;
+            float y = -bow * along * along;
+            float slope = safeCount <= 1 || step <= 0.01f ? 0f : (2f * bow * along) / ((safeCount - 1) * 0.5f * step);
+            float rotation = Mathf.Clamp(Mathf.Atan(slope) * Mathf.Rad2Deg, -5.5f, 5.5f);
+            return (new Vector2(x, y), rotation);
         }
 
         Vector2 HandLocal(int screen, int index, int count, bool selected)
@@ -794,24 +1019,24 @@ namespace Hearts.Presentation
             int safeIndex = Mathf.Clamp(index, 0, safeCount - 1);
             float along = safeCount <= 1 ? 0f : (safeIndex / (float)(safeCount - 1)) * 2f - 1f;
             float center = (safeCount - 1) * 0.5f;
-            Vector2 card = _metricsReady ? _metrics.cardSize : new Vector2(112f, 157f);
-            Vector2 local = _metricsReady ? _metrics.localCardSize : new Vector2(134f, 188f);
+            Vector2 card = CardSizeFor(screen);
+            Rect area = HandContainer(screen) != null ? HandContainer(screen).rect : new Rect(0f, 0f, card.x, card.y);
             if (screen == 0)
             {
-                float step = Mathf.Min(local.x * 0.48f, 78f);
-                float lift = selected ? (_metricsReady ? _metrics.selectionLift : 28f) : 0f;
+                float room = Mathf.Max(0f, area.width - card.x);
+                float overlap = card.x * 0.82f;
+                float fitted = safeCount <= 1 ? 0f : room / (safeCount - 1);
+                float step = safeCount <= 1 ? 0f : Mathf.Min(overlap, fitted);
+                float lift = selected ? card.y * 0.18f : 0f;
                 return new Vector2((safeIndex - center) * step, lift);
             }
 
             if (screen == 2)
-            {
-                float step = Mathf.Min(card.x * 0.42f, 52f);
-                float arc = card.y * 0.12f;
-                return new Vector2((safeIndex - center) * step, -arc * (1f - along * along));
-            }
+                return TopFan(safeIndex, safeCount).position;
 
-            float sideStep = Mathf.Min(card.x * 0.48f, 40f);
-            float bow = card.x * 0.16f * (1f - along * along);
+            float sideRoom = Mathf.Max(0f, area.height - card.x);
+            float sideStep = Mathf.Min(card.x * 0.42f, safeCount <= 1 ? 0f : sideRoom / (safeCount - 1));
+            float bow = card.x * 0.12f * (1f - along * along);
             float x = screen == 1 ? bow : -bow;
             return new Vector2(x, (safeIndex - center) * sideStep);
         }
@@ -856,12 +1081,8 @@ namespace Hearts.Presentation
 
             _clearingTrick = true;
             int version = _visualVersion;
-            int screen = ScreenOf(winner, table.LocalSeat);
-            Vector2 dest = AvatarPoint(screen);
-            Transform tuck = screenHuds != null && screen < screenHuds.Length && screenHuds[screen] != null
-                ? screenHuds[screen].transform
-                : null;
             int pending = 4;
+            Vector2 shift = GatherOffset(ScreenOf(winner, table.LocalSeat));
             if (animations == null)
             {
                 for (int i = 0; i < 4; i++)
@@ -880,7 +1101,8 @@ namespace Hearts.Presentation
                 int index = taken[i];
                 CardView view = cards[index];
                 view.SetInteractable(false);
-                animations.Collect(view.Rect, dest, tuck, () =>
+                Vector2 dest = view.Rect.anchoredPosition + shift;
+                animations.Collect(view.Rect, dest, () =>
                 {
                     if (version != _visualVersion)
                         return;
@@ -892,19 +1114,38 @@ namespace Hearts.Presentation
                     _clearingTrick = false;
                     _trickPlay.Clear();
                     table.FinishTrickPresentation();
-                }, i * 0.04f);
+                });
             }
         }
 
-        Vector2 AvatarPoint(int screen)
+        Vector2 GatherOffset(int screen)
         {
-            if (screenHuds != null && screen >= 0 && screen < screenHuds.Length && screenHuds[screen] != null)
-            {
-                RectTransform avatar = screenHuds[screen].AvatarRect;
-                if (avatar != null && cardsRoot != null)
-                    return cardsRoot.InverseTransformPoint(avatar.position);
-            }
-            return TrickPosition(0);
+            Vector2 origin = Vector2.zero;
+            for (int i = 0; i < 4; i++)
+                origin += TrickPosition(i);
+            origin *= 0.25f;
+
+            Vector2 toward = origin + SeatDirection(screen) * 220f;
+            RectTransform hand = HandContainer(screen);
+            if (hand != null && cardsRoot != null)
+                toward = cardsRoot.InverseTransformPoint(hand.TransformPoint(hand.rect.center));
+
+            Vector2 delta = toward - origin;
+            if (delta.sqrMagnitude < 4f)
+                delta = SeatDirection(screen) * 170f;
+            float travel = Mathf.Clamp(delta.magnitude * 0.42f, 130f, 200f);
+            return delta.normalized * travel;
+        }
+
+        static Vector2 SeatDirection(int screen)
+        {
+            if (screen == 1)
+                return Vector2.left;
+            if (screen == 2)
+                return Vector2.up;
+            if (screen == 3)
+                return Vector2.right;
+            return Vector2.down;
         }
 
         void ClearCollected()
@@ -1110,36 +1351,42 @@ namespace Hearts.Presentation
                     }
                     _handContainers[screen] = hand;
                 }
-
-                hand.localRotation = Quaternion.identity;
-                hand.localScale = Vector3.one;
-                if (hand.sizeDelta.sqrMagnitude < 4f)
-                    hand.sizeDelta = HandSize(screen);
             }
         }
 
-        Vector2 HandCenter(int screen)
+        void CaptureHandCardSizes()
         {
-            if (!_metricsReady)
-                return Vector2.zero;
-            if (screen == 1)
-                return new Vector2(_metrics.leftCardX, _metrics.sideBaseY + _metrics.sideTravel * 0.5f);
-            if (screen == 2)
-                return new Vector2((_metrics.topFanLeft + _metrics.topFanRight) * 0.5f, _metrics.topFanY);
-            if (screen == 3)
-                return new Vector2(_metrics.rightCardX, _metrics.sideBaseY + _metrics.sideTravel * 0.5f);
-            return new Vector2((_metrics.handLeft + _metrics.handRight) * 0.5f, _metrics.handCenterY);
+            EnsureHandContainers();
+            for (int screen = 0; screen < 4; screen++)
+            {
+                RectTransform hand = _handContainers[screen];
+                if (hand == null)
+                    continue;
+                for (int child = 0; child < hand.childCount; child++)
+                {
+                    var rect = hand.GetChild(child) as RectTransform;
+                    if (rect == null || rect.sizeDelta.x < 8f || rect.sizeDelta.y < 8f)
+                        continue;
+                    _handCardSize[screen] = rect.sizeDelta;
+                    _handCardSizeReady[screen] = true;
+                    break;
+                }
+            }
         }
 
-        Vector2 HandSize(int screen)
+        Vector2 CardSizeFor(int screen)
         {
-            if (!_metricsReady)
-                return new Vector2(160f, 160f);
-            if (screen == 1 || screen == 3)
-                return new Vector2(_metrics.cardSize.y + _metrics.cardSize.x * 0.45f, Mathf.Max(48f, _metrics.sideTravel + _metrics.cardSize.x));
-            if (screen == 2)
-                return new Vector2(Mathf.Max(48f, _metrics.topFanRight - _metrics.topFanLeft + _metrics.cardSize.x), _metrics.cardSize.y * 1.35f);
-            return new Vector2(Mathf.Max(48f, _metrics.handRight - _metrics.handLeft + _metrics.localCardSize.x), _metrics.localCardSize.y + _metrics.selectionLift);
+            Vector2 local = _handCardSizeReady[0] ? _handCardSize[0] : new Vector2(140f, 196f);
+            if (screen == 0)
+                return local;
+            Vector2 small = local * 0.52f;
+            if (screen >= 1 && screen < 4 && _handCardSizeReady[screen])
+            {
+                Vector2 authored = _handCardSize[screen];
+                if (authored.x <= local.x * 0.7f && authored.y <= local.y * 0.7f)
+                    return authored;
+            }
+            return small;
         }
 
         Vector2 ToCards(Vector2 bottomLeft)
@@ -1221,7 +1468,7 @@ namespace Hearts.Presentation
 
             _metrics = TableLayout.Compute(width, height, left, right, bottom, top);
             _metricsReady = true;
-            ApplyChrome(_metrics);
+            ApplyChrome();
             return true;
         }
 
@@ -1239,12 +1486,8 @@ namespace Hearts.Presentation
             top = (Screen.height - safe.yMax) * scaleY;
         }
 
-        void ApplyChrome(TableMetrics metrics)
+        void ApplyChrome()
         {
-            Place(trickArea, metrics.trickCenter, new Vector2(metrics.cardSize.x + metrics.trickOffsetX * 2f, metrics.cardSize.y + metrics.trickOffsetY * 2f));
-            Place(deckPoint, metrics.deckCenter, new Vector2(20f, 20f));
-            Place(tableStatus != null ? tableStatus.rectTransform : null, metrics.statusCenter, metrics.statusSize);
-            Canvas.ForceUpdateCanvases();
             if (tableStatus != null)
             {
                 tableStatus.horizontalOverflow = HorizontalWrapMode.Wrap;
@@ -1255,26 +1498,6 @@ namespace Hearts.Presentation
                 tableStatus.raycastTarget = false;
             }
             EnsureHandContainers();
-        }
-
-        void Place(RectTransform[] rects, int index, Vector2 center, Vector2 size)
-        {
-            if (rects == null || index < 0 || index >= rects.Length)
-                return;
-            Place(rects[index], center, size);
-        }
-
-        static void Place(RectTransform rect, Vector2 center, Vector2 size)
-        {
-            if (rect == null)
-                return;
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.zero;
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = center;
-            rect.sizeDelta = size;
-            rect.localRotation = Quaternion.identity;
-            rect.localScale = Vector3.one;
         }
     }
 }

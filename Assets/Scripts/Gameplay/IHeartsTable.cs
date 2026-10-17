@@ -19,6 +19,8 @@ namespace Hearts.Gameplay
         int TrickCard(int seat);
         int RoundScore(int seat);
         int TotalScore(int seat);
+        int LoggedRounds { get; }
+        int LoggedScore(int round, int seat);
         string PlayerName(int seat);
         int AvatarIndex(int seat);
         int CardsRemaining(int seat);

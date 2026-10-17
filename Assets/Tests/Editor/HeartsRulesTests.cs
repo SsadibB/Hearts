@@ -177,6 +177,61 @@ namespace Hearts.Tests
         }
 
         [Test]
+        public void EveryRoundPassesThreeCardsClockwise()
+        {
+            var match = new HeartsMatch();
+            Assert.IsTrue(match.TryStartRound(11, out string error), error);
+            PlayRound(match);
+            Assert.AreEqual(MatchPhase.RoundEnd, match.Phase);
+            Assert.AreEqual(1, match.LoggedRounds);
+            Assert.IsTrue(match.TryContinue(out error), error);
+            Assert.IsTrue(match.TryStartRound(19, out error), error);
+            Assert.AreEqual(MatchPhase.Passing, match.Phase);
+
+            var passed = new List<CardId>[4];
+            for (int player = 0; player < 4; player++)
+            {
+                passed[player] = new List<CardId>
+                {
+                    match.Hand(player)[0],
+                    match.Hand(player)[1],
+                    match.Hand(player)[2]
+                };
+                Assert.IsTrue(match.TryPass(player, passed[player], out error), error);
+            }
+
+            Assert.AreEqual(MatchPhase.Playing, match.Phase);
+            for (int player = 0; player < 4; player++)
+            {
+                int receiver = HeartsRules.NextSeat(player);
+                for (int i = 0; i < passed[player].Count; i++)
+                    Assert.IsTrue(Contains(match.Hand(receiver), passed[player][i]));
+            }
+            Assert.AreEqual(1, match.LoggedRounds);
+        }
+
+        static void PlayRound(HeartsMatch match)
+        {
+            string error;
+            for (int player = 0; player < 4; player++)
+            {
+                var pass = new List<CardId> { match.Hand(player)[0], match.Hand(player)[1], match.Hand(player)[2] };
+                Assert.IsTrue(match.TryPass(player, pass, out error), error);
+            }
+
+            for (int trick = 0; trick < 13; trick++)
+            {
+                for (int turn = 0; turn < 4; turn++)
+                {
+                    int player = match.CurrentPlayer;
+                    var legal = match.LegalCardsFor(player);
+                    Assert.IsTrue(match.TryPlay(player, legal[0], out error), error);
+                }
+                Assert.IsTrue(match.TryConfirmTrick(out error), error);
+            }
+        }
+
+        [Test]
         public void ConstructedFirstTrickRejectsQueenWhenADiamondRemains()
         {
             var hands = EmptyHands();

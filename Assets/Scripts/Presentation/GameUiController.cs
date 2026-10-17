@@ -1,3 +1,5 @@
+using System;
+using DG.Tweening;
 using Hearts.Gameplay;
 using Hearts.Networking;
 using Hearts.Persistence;
@@ -39,11 +41,12 @@ namespace Hearts.Presentation
         [SerializeField] Slider sfxSlider;
 
         CanvasGroup _leavePrompt;
+        CanvasGroup _leaderboardBackdrop;
+        bool _leaderboardOpen;
 
         PlayerSettingsData _settings;
         bool _tableShown;
         bool _gameFullscreen;
-        Vector2 _fittedCanvas;
 
         public Button PassButton => passButton;
         public Button NextRoundButton => nextRoundButton;
@@ -60,7 +63,6 @@ namespace Hearts.Presentation
             if (sfxSlider != null)
                 sfxSlider.value = _settings.SfxVolume;
             ShowAvatar();
-            PlacePassArrow();
             SetGroup(mainMenu, true);
             SetGroup(gameTable, false);
             SetGroup(passingPanel, false);
@@ -78,6 +80,7 @@ namespace Hearts.Presentation
             if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
             if (closeSettingsButton != null) closeSettingsButton.onClick.AddListener(CloseSettings);
             if (leaveButton != null) leaveButton.onClick.AddListener(AskLeave);
+            EnsureLeaderboardButton();
             if (avatarButton != null) avatarButton.onClick.AddListener(NextAvatar);
             if (masterSlider != null) masterSlider.onValueChanged.AddListener(_ => OnVolumeChanged());
             if (sfxSlider != null) sfxSlider.onValueChanged.AddListener(_ => OnVolumeChanged());
@@ -87,7 +90,6 @@ namespace Hearts.Presentation
         {
             if (menuStatus != null && session != null && mainMenu != null && mainMenu.gameObject.activeSelf)
                 menuStatus.text = session.LastMessage;
-            FitChrome();
         }
 
         public void StartSinglePlayer()
@@ -149,6 +151,7 @@ namespace Hearts.Presentation
         public void ReturnToMenu()
         {
             HideLeavePrompt();
+            CloseLeaderboard();
             if (singlePlayer != null && singlePlayer.IsActive)
                 singlePlayer.StopMatch();
             if (session != null)
@@ -212,13 +215,18 @@ namespace Hearts.Presentation
         {
             if (passButton == null)
                 return;
+            if (show)
+            {
+                RectTransform canvas = CanvasRect();
+                if (canvas != null && passButton.transform.parent != canvas)
+                    passButton.transform.SetParent(canvas, false);
+                passButton.transform.SetAsLastSibling();
+            }
             passButton.gameObject.SetActive(show);
             passButton.interactable = show;
             var image = passButton.GetComponent<Image>();
             if (image != null)
-                image.color = ready ? Color.white : new Color(1f, 1f, 1f, 0.4f);
-            if (show)
-                passButton.transform.SetAsLastSibling();
+                image.color = ready ? Color.white : new Color(1f, 1f, 1f, 0.45f);
         }
 
         public void HideCards(RectTransform cards)
@@ -229,7 +237,80 @@ namespace Hearts.Presentation
 
         public void ShowLeaderboard(bool show)
         {
-            SetGroup(leaderboardPanel, show);
+            if (show)
+                OpenLeaderboard();
+            else
+                CloseLeaderboard();
+        }
+
+        public void OpenLeaderboard()
+        {
+            if (leaderboardPanel == null || _leaderboardOpen)
+                return;
+            EnsureLeaderboardBackdrop();
+            _leaderboardOpen = true;
+            if (_leaderboardBackdrop != null)
+            {
+                _leaderboardBackdrop.transform.SetAsLastSibling();
+                _leaderboardBackdrop.gameObject.SetActive(true);
+                _leaderboardBackdrop.alpha = 0f;
+                _leaderboardBackdrop.interactable = true;
+                _leaderboardBackdrop.blocksRaycasts = true;
+            }
+            leaderboardPanel.transform.SetAsLastSibling();
+            leaderboardPanel.gameObject.SetActive(true);
+            leaderboardPanel.alpha = 0f;
+            leaderboardPanel.interactable = true;
+            leaderboardPanel.blocksRaycasts = true;
+            leaderboardPanel.transform.localScale = Vector3.one * 0.96f;
+            if (animations != null)
+            {
+                if (_leaderboardBackdrop != null)
+                    animations.Fade(_leaderboardBackdrop, 1f, true, null);
+                animations.Fade(leaderboardPanel, 1f, true, null);
+            }
+            else
+            {
+                if (_leaderboardBackdrop != null)
+                    SetGroup(_leaderboardBackdrop, true);
+                SetGroup(leaderboardPanel, true);
+            }
+            leaderboardPanel.transform.DOKill(false);
+            leaderboardPanel.transform.DOScale(1f, 0.28f).SetEase(Ease.OutCubic);
+        }
+
+        public void CloseLeaderboard()
+        {
+            CloseLeaderboard(null);
+        }
+
+        public void CloseLeaderboard(Action onClosed)
+        {
+            if (leaderboardPanel == null || (!_leaderboardOpen && !leaderboardPanel.gameObject.activeSelf))
+            {
+                onClosed?.Invoke();
+                return;
+            }
+            _leaderboardOpen = false;
+            leaderboardPanel.transform.DOKill(false);
+            leaderboardPanel.transform.DOScale(0.96f, 0.28f).SetEase(Ease.InCubic);
+            if (animations != null)
+            {
+                if (_leaderboardBackdrop != null)
+                    animations.Fade(_leaderboardBackdrop, 0f, false, null);
+                animations.Fade(leaderboardPanel, 0f, false, () =>
+                {
+                    if (!_leaderboardOpen && leaderboardPanel != null)
+                        leaderboardPanel.transform.localScale = Vector3.one;
+                    onClosed?.Invoke();
+                });
+                return;
+            }
+            if (_leaderboardBackdrop != null)
+                SetGroup(_leaderboardBackdrop, false);
+            SetGroup(leaderboardPanel, false);
+            leaderboardPanel.transform.localScale = Vector3.one;
+            onClosed?.Invoke();
         }
 
         public void ShowGameOver(string message)
@@ -283,63 +364,6 @@ namespace Hearts.Presentation
             Screen.fullScreen = false;
         }
 
-        void PlacePassArrow()
-        {
-            if (passButton == null)
-                return;
-            var canvas = gameTable != null ? gameTable.GetComponentInParent<Canvas>() : null;
-            if (canvas != null)
-                passButton.transform.SetParent(canvas.transform, false);
-            var rect = passButton.GetComponent<RectTransform>();
-            rect.anchorMin = new Vector2(0.5f, 0.5f);
-            rect.anchorMax = new Vector2(0.5f, 0.5f);
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = Vector2.zero;
-            rect.sizeDelta = new Vector2(128f, 128f);
-            rect.localScale = Vector3.one;
-            rect.localRotation = Quaternion.identity;
-        }
-
-        void FitChrome()
-        {
-            RectTransform canvas = CanvasRect();
-            if (canvas == null)
-                return;
-            Canvas.ForceUpdateCanvases();
-            float width = canvas.rect.width;
-            float height = canvas.rect.height;
-            if (width < 80f || height < 80f)
-                return;
-            if (Mathf.Abs(_fittedCanvas.x - width) < 0.5f && Mathf.Abs(_fittedCanvas.y - height) < 0.5f)
-                return;
-            _fittedCanvas = new Vector2(width, height);
-
-            ReadInsets(width, height, out float left, out float right, out float bottom, out float top);
-            TableMetrics table = TableLayout.Compute(width, height, left, right, bottom, top);
-            MenuMetrics menu = TableLayout.ComputeMenu(width, height, left, right, bottom, top);
-
-            Place(passButton != null ? passButton.GetComponent<RectTransform>() : null, table.passCenter, table.passSize);
-            Place(leaveButton != null ? leaveButton.GetComponent<RectTransform>() : null, table.leaveCenter, table.leaveSize);
-            Place(FindRect(mainMenu, "Title"), menu.titleCenter, menu.titleSize);
-            Place(avatarButton != null ? avatarButton.GetComponent<RectTransform>() : null, menu.avatarCenter, menu.avatarSize);
-            Place(nameInput != null ? nameInput.GetComponent<RectTransform>() : null, menu.nameCenter, menu.nameSize);
-            Place(singlePlayerButton != null ? singlePlayerButton.GetComponent<RectTransform>() : null, menu.singleCenter, menu.singleSize);
-            Place(multiplayerButton != null ? multiplayerButton.GetComponent<RectTransform>() : null, menu.multiCenter, menu.multiSize);
-            Place(settingsButton != null ? settingsButton.GetComponent<RectTransform>() : null, menu.settingsCenter, menu.settingsSize);
-            Place(menuStatus != null ? menuStatus.rectTransform : null, menu.statusCenter, menu.statusSize);
-            FitLabel(FindRect(mainMenu, "Title"), menu.titleFont, TextAnchor.MiddleCenter);
-            FitChildren(singlePlayerButton != null ? singlePlayerButton.transform : null);
-            FitChildren(multiplayerButton != null ? multiplayerButton.transform : null);
-            FitChildren(settingsButton != null ? settingsButton.transform : null);
-            FitChildren(nameInput != null ? nameInput.transform : null);
-
-            FitPopup(multiplayerPanel, 640f, 420f, false);
-            FitPopup(settingsPanel, 560f, 360f, false);
-            FitPopup(leaderboardPanel, 760f, 520f, false);
-            FitPopup(gameOverPanel, 900f, 120f, true);
-            FitPopup(passingPanel, 220f, 180f, false);
-        }
-
         RectTransform CanvasRect()
         {
             if (gameTable != null)
@@ -347,110 +371,6 @@ namespace Hearts.Presentation
             if (mainMenu != null)
                 return mainMenu.GetComponentInParent<Canvas>()?.GetComponent<RectTransform>();
             return null;
-        }
-
-        static void ReadInsets(float width, float height, out float left, out float right, out float bottom, out float top)
-        {
-            left = right = bottom = top = 0f;
-            if (Screen.width < 8 || Screen.height < 8)
-                return;
-            Rect safe = Screen.safeArea;
-            float scaleX = width / Screen.width;
-            float scaleY = height / Screen.height;
-            left = safe.xMin * scaleX;
-            right = (Screen.width - safe.xMax) * scaleX;
-            bottom = safe.yMin * scaleY;
-            top = (Screen.height - safe.yMax) * scaleY;
-        }
-
-        static RectTransform FindRect(CanvasGroup group, string childName)
-        {
-            if (group == null)
-                return null;
-            Transform child = group.transform.Find(childName);
-            return child as RectTransform;
-        }
-
-        static void Place(RectTransform rect, Vector2 center, Vector2 size)
-        {
-            if (rect == null)
-                return;
-            rect.anchorMin = Vector2.zero;
-            rect.anchorMax = Vector2.zero;
-            rect.pivot = new Vector2(0.5f, 0.5f);
-            rect.anchoredPosition = center;
-            rect.sizeDelta = size;
-            rect.localRotation = Quaternion.identity;
-            rect.localScale = Vector3.one;
-        }
-
-        static void FitLabel(RectTransform rect, int fontSize, TextAnchor alignment)
-        {
-            if (rect == null)
-                return;
-            var text = rect.GetComponent<Text>();
-            if (text == null)
-                return;
-            text.fontSize = fontSize;
-            text.alignment = alignment;
-            text.horizontalOverflow = HorizontalWrapMode.Wrap;
-            text.verticalOverflow = VerticalWrapMode.Truncate;
-            text.resizeTextForBestFit = true;
-            text.resizeTextMinSize = 16;
-            text.resizeTextMaxSize = fontSize;
-        }
-
-        static void FitChildren(Transform root)
-        {
-            if (root == null)
-                return;
-            for (int i = 0; i < root.childCount; i++)
-            {
-                var child = root.GetChild(i) as RectTransform;
-                if (child == null)
-                    continue;
-                if (child.name != "Label" && child.name != "Text" && child.name != "Placeholder")
-                    continue;
-                child.anchorMin = Vector2.zero;
-                child.anchorMax = Vector2.one;
-                child.offsetMin = new Vector2(12f, 4f);
-                child.offsetMax = new Vector2(-12f, -4f);
-                var text = child.GetComponent<Text>();
-                if (text == null)
-                    continue;
-                text.resizeTextForBestFit = true;
-                text.resizeTextMinSize = 12;
-                text.resizeTextMaxSize = 22;
-                text.horizontalOverflow = HorizontalWrapMode.Wrap;
-                text.verticalOverflow = VerticalWrapMode.Truncate;
-            }
-        }
-
-        static void FitPopup(CanvasGroup group, float preferredWidth, float preferredHeight, bool pinTop)
-        {
-            if (group == null)
-                return;
-            var rect = group.GetComponent<RectTransform>();
-            var canvas = group.GetComponentInParent<Canvas>();
-            var canvasRect = canvas != null ? canvas.GetComponent<RectTransform>() : null;
-            float width = canvasRect != null ? canvasRect.rect.width : preferredWidth;
-            float height = canvasRect != null ? canvasRect.rect.height : preferredHeight;
-            float scale = TableLayout.PopupScale(width, height, preferredWidth, preferredHeight);
-            rect.sizeDelta = new Vector2(preferredWidth, preferredHeight);
-            rect.localScale = new Vector3(scale, scale, 1f);
-            rect.localRotation = Quaternion.identity;
-            if (pinTop)
-            {
-                rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
-                rect.pivot = new Vector2(0.5f, 1f);
-                rect.anchoredPosition = new Vector2(0f, -12f);
-            }
-            else
-            {
-                rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 0.5f);
-                rect.pivot = new Vector2(0.5f, 0.5f);
-                rect.anchoredPosition = Vector2.zero;
-            }
         }
 
         static void SetGroup(CanvasGroup group, bool visible)
@@ -461,6 +381,93 @@ namespace Hearts.Presentation
             group.interactable = visible;
             group.blocksRaycasts = visible;
             group.gameObject.SetActive(visible);
+        }
+
+        void EnsureLeaderboardButton()
+        {
+            if (gameTable == null)
+                return;
+            var existing = gameTable.transform.Find("LeaderboardButton");
+            Button button;
+            if (existing != null)
+            {
+                button = existing.GetComponent<Button>();
+            }
+            else
+            {
+                Font font = null;
+                if (leaveButton != null)
+                {
+                    var sample = leaveButton.GetComponentInChildren<Text>();
+                    if (sample != null)
+                        font = sample.font;
+                }
+                if (font == null)
+                    font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+                var go = new GameObject("LeaderboardButton", typeof(RectTransform), typeof(Image), typeof(Button));
+                go.transform.SetParent(gameTable.transform, false);
+                var rect = go.GetComponent<RectTransform>();
+                var leaveRect = leaveButton != null ? leaveButton.GetComponent<RectTransform>() : null;
+                if (leaveRect != null)
+                {
+                    rect.anchorMin = leaveRect.anchorMin;
+                    rect.anchorMax = leaveRect.anchorMax;
+                    rect.pivot = leaveRect.pivot;
+                    rect.sizeDelta = new Vector2(168f, leaveRect.sizeDelta.y);
+                    rect.anchoredPosition = leaveRect.anchoredPosition - new Vector2(leaveRect.sizeDelta.x * 0.5f + 96f, 0f);
+                }
+                else
+                {
+                    rect.anchorMin = rect.anchorMax = new Vector2(1f, 1f);
+                    rect.pivot = new Vector2(1f, 1f);
+                    rect.anchoredPosition = new Vector2(-180f, -16f);
+                    rect.sizeDelta = new Vector2(168f, 44f);
+                }
+                go.GetComponent<Image>().color = new Color(0.2f, 0.36f, 0.52f, 1f);
+                var labelGo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+                labelGo.transform.SetParent(go.transform, false);
+                var labelRect = labelGo.GetComponent<RectTransform>();
+                labelRect.anchorMin = Vector2.zero;
+                labelRect.anchorMax = Vector2.one;
+                labelRect.offsetMin = Vector2.zero;
+                labelRect.offsetMax = Vector2.zero;
+                var label = labelGo.GetComponent<Text>();
+                label.font = font;
+                label.text = "Leaderboard";
+                label.alignment = TextAnchor.MiddleCenter;
+                label.color = Color.white;
+                label.fontSize = 18;
+                label.raycastTarget = false;
+                button = go.GetComponent<Button>();
+            }
+            if (button != null)
+                button.onClick.AddListener(OpenLeaderboard);
+        }
+
+        void EnsureLeaderboardBackdrop()
+        {
+            if (_leaderboardBackdrop != null || leaderboardPanel == null)
+                return;
+            RectTransform canvas = CanvasRect();
+            if (canvas == null)
+                return;
+            var go = new GameObject("LeaderboardBackdrop", typeof(RectTransform), typeof(Image), typeof(Button), typeof(CanvasGroup));
+            go.transform.SetParent(canvas, false);
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+            var image = go.GetComponent<Image>();
+            image.color = new Color(0f, 0f, 0f, 0.45f);
+            image.raycastTarget = true;
+            go.GetComponent<Button>().onClick.AddListener(CloseLeaderboard);
+            _leaderboardBackdrop = go.GetComponent<CanvasGroup>();
+            _leaderboardBackdrop.alpha = 0f;
+            _leaderboardBackdrop.interactable = false;
+            _leaderboardBackdrop.blocksRaycasts = false;
+            go.SetActive(false);
         }
 
         void EnsureLeavePrompt()

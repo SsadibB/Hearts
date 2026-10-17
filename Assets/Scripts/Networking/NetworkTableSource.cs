@@ -14,6 +14,8 @@ namespace Hearts.Networking
         [SerializeField] HeartsSession session;
 
         NetworkHeartsPlayer _hooked;
+        readonly List<int[]> _logged = new List<int[]>();
+        int _loggedThrough = -1;
 
         public bool IsActive => match != null && match.Object != null && match.Object.IsValid;
         public int Phase => match != null ? match.Phase : (int)MatchPhase.Waiting;
@@ -40,6 +42,23 @@ namespace Hearts.Networking
         public int RoundScore(int seat) => match != null && seat >= 0 && seat < HeartsRules.PlayerCount ? match.RoundScores[seat] : 0;
 
         public int TotalScore(int seat) => match != null && seat >= 0 && seat < HeartsRules.PlayerCount ? match.TotalScores[seat] : 0;
+
+        public int LoggedRounds
+        {
+            get
+            {
+                CaptureRounds();
+                return _logged.Count;
+            }
+        }
+
+        public int LoggedScore(int round, int seat)
+        {
+            CaptureRounds();
+            if (round < 0 || round >= _logged.Count || seat < 0 || seat >= HeartsRules.PlayerCount)
+                return 0;
+            return _logged[round][seat];
+        }
 
         public string PlayerName(int seat)
         {
@@ -100,8 +119,28 @@ namespace Hearts.Networking
                 match.FinishTrickPresentation();
         }
 
+        void CaptureRounds()
+        {
+            if (match == null || match.Object == null || !match.Object.IsValid)
+                return;
+            if (match.RoundIndex < _loggedThrough)
+            {
+                _logged.Clear();
+                _loggedThrough = -1;
+            }
+            bool ended = match.Phase == (int)MatchPhase.RoundEnd || match.Phase == (int)MatchPhase.MatchOver;
+            if (!ended || match.RoundIndex <= _logged.Count)
+                return;
+            var row = new int[HeartsRules.PlayerCount];
+            for (int seat = 0; seat < HeartsRules.PlayerCount; seat++)
+                row[seat] = match.RoundScores[seat];
+            _logged.Add(row);
+            _loggedThrough = match.RoundIndex;
+        }
+
         void Update()
         {
+            CaptureRounds();
             var local = Local();
             if (local == _hooked)
                 return;

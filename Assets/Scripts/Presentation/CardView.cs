@@ -62,6 +62,13 @@ namespace Hearts.Presentation
             _interactable = interactable;
             if (faceImage != null)
                 faceImage.raycastTarget = interactable;
+            var group = GetComponent<CanvasGroup>();
+            if (group == null)
+                return;
+            group.blocksRaycasts = interactable;
+            group.interactable = interactable;
+            if (interactable)
+                group.alpha = 1f;
         }
 
         public void OnPointerClick(PointerEventData eventData)

@@ -116,6 +116,8 @@ namespace Hearts.Presentation
                 return;
             group.DOKill(false);
             group.alpha = 1f;
+            group.blocksRaycasts = true;
+            group.interactable = true;
         }
 
         public void Fade(CanvasGroup group, float alpha, bool activeWhenShown, Action onComplete)
@@ -152,7 +154,7 @@ namespace Hearts.Presentation
                 .OnKill(Finish);
         }
 
-        public void Collect(RectTransform rect, Vector2 anchoredPosition, Transform tuckUnder, Action onComplete, float delay = 0f)
+        public void Collect(RectTransform rect, Vector2 anchoredPosition, Action onComplete, float delay = 0f)
         {
             if (rect == null)
             {
@@ -182,19 +184,9 @@ namespace Hearts.Presentation
 
             var sequence = DOTween.Sequence();
             sequence.SetDelay(delay);
-            sequence.Append(rect.DOAnchorPos(anchoredPosition, 1.15f).SetEase(Ease.InOutCubic));
-            sequence.Join(rect.DOLocalRotate(Vector3.zero, 1.15f, RotateMode.Fast).SetEase(Ease.InOutCubic));
-            sequence.AppendCallback(() =>
-            {
-                if (tuckUnder != null)
-                {
-                    rect.SetParent(tuckUnder, true);
-                    rect.SetAsFirstSibling();
-                }
-                else
-                    rect.SetAsFirstSibling();
-            });
-            sequence.Append(group.DOFade(0f, 0.42f).SetEase(Ease.InOutQuad));
+            sequence.Append(rect.DOAnchorPos(anchoredPosition, 0.75f).SetEase(Ease.InOutSine));
+            sequence.Join(rect.DOScale(rect.localScale * 0.88f, 0.75f).SetEase(Ease.InCubic));
+            sequence.Join(group.DOFade(0f, 0.75f).SetEase(Ease.InQuad));
             sequence.OnComplete(Finish);
             sequence.OnKill(Finish);
         }

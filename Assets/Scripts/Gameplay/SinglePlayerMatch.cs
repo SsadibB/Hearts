@@ -73,6 +73,10 @@ namespace Hearts.Gameplay
 
         public int TotalScore(int seat) => Score(_match.TotalScores, seat);
 
+        public int LoggedRounds => _match.LoggedRounds;
+
+        public int LoggedScore(int round, int seat) => _match.LoggedScore(round, seat);
+
         public string PlayerName(int seat)
         {
             if (seat < 0 || seat >= _names.Length)
